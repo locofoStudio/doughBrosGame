@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en-us">
+<head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>locoBakedGame</title>
+    <link rel="stylesheet" href="TemplateData/style.css">
+    
+    <!-- Firebase SDKs - Optimized for fast loading -->
+    <script defer src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script defer src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+    <script defer src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+
+    <script>
+        // Parse URL parameters immediately
+        function getUrlParams() {
+            const params = new URLSearchParams(window.location.search);
+            return {
+                uid: params.get('uid') || '',
+                venueId: params.get('venueId') || '',
+                idToken: params.get('token') || ''
+            };
+        }
+
+        // Store parameters globally for immediate access
+        window.unityGameParams = getUrlParams();
+        console.log("[Game] Parameters loaded:", window.unityGameParams);
+
+        // Firebase configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyDTgpaJ1UMaKd1TxMhunRsOlieN8mWpjM4",
+            authDomain: "locotag.firebaseapp.com",
+            projectId: "locotag",
+            storageBucket: "locotag.firebasestorage.app",
+            messagingSenderId: "783647689390",
+            appId: "1:783647689390:web:2dfe72017ec74be3863b3f",
+            measurementId: "G-3J2CKXKNV3"
+        };
+
+        // Initialize Firebase and authentication
+        function initializeFirebase() {
+            if (typeof firebase === 'undefined') {
+                console.error("[Firebase] SDK not loaded");
+                return;
+            }
+
+            firebase.initializeApp(firebaseConfig);
+            console.log("[Firebase] Initialized");
+
+            const { idToken } = window.unityGameParams;
+            
+            if (idToken) {
+                // Verify ID token with Firebase REST API
+                fetch(`https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${firebaseConfig.apiKey}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ idToken })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.users && data.users.length > 0) {
+                        const user = data.users[0];
+                        console.log("[Firebase] Token verified for user:", user.localId);
+                        
+                        // Sign in anonymously but use real user ID
+                        firebase.auth().signInAnonymously()
+                            .then(() => {
+                                console.log("[Firebase] Authentication successful");
+                                sendUnityParams(user.localId);
+                            });
+                    } else {
+                        throw new Error('Invalid token');
+                    }
+                })
+                .catch(error => {
+                    console.error("[Firebase] Token verification failed:", error);
+                    fallbackAuth();
+                });
+            } else {
+                console.log("[Firebase] No token provided, using anonymous auth");
+                fallbackAuth();
+            }
+        }
+
+        function fallbackAuth() {
+            firebase.auth().signInAnonymously()
+                .then(userCredential => {
+                    console.log("[Firebase] Anonymous sign-in successful:", userCredential.user.uid);
+                    sendUnityParams(userCredential.user.uid);
+                })
+                .catch(error => {
+                    console.error("[Firebase] Authentication failed:", error);
+                    if (window.unityInstance) {
+                        window.unityInstance.SendMessage('FirebaseBridge', 'OnAuthError', 'Authentication failed');
+                    }
+                });
+        }
+
+        function sendUnityParams(uid) {
+            if (window.unityInstance) {
+                const gameParams = { ...window.unityGameParams, uid };
+                window.unityInstance.SendMessage('FirebaseBridge', 'OnAuthStateChanged', uid);
+                window.unityInstance.SendMessage('FirebaseBridge', 'SetGameParameters', JSON.stringify(gameParams));
+                console.log("[Unity] Parameters sent to game");
+            }
+        }
+
+        // Initialize Firebase when DOM is ready
+        document.addEventListener('DOMContentLoaded', initializeFirebase);
+    </script>
+</head>
+<body>
+    <div id="unity-container">
+        <canvas id="unity-canvas"></canvas>
+        
+        <!-- Custom Loading Animation -->
+        <div id="unity-loading-bar">
+            <div class="blackmirrorLoading">
+                <div class="blackmirrorLoading-part"></div>
+                <div class="blackmirrorLoading-part"></div>
+                <div class="blackmirrorLoading-part"></div>
+                <div class="blackmirrorLoading-part"></div>
+                <div class="blackmirrorLoading-part"></div>
+                <div class="blackmirrorLoading-part"></div>
+                <div class="blackmirrorLoading-part"></div>
+                <div class="blackmirrorLoading-part"></div>
+            </div>
+            <div id="loading-text">Loading Game...</div>
+        </div>
+        
+        <!-- Error display -->
+        <div id="unity-warning"></div>
+    </div>
+
+    <script>
+        const canvas = document.querySelector("#unity-canvas");
+        const container = document.querySelector("#unity-container");
+        const loadingBar = document.querySelector("#unity-loading-bar");
+        const warningBanner = document.querySelector("#unity-warning");
+
+        // Optimized error banner function
+        function showBanner(msg, type) {
+            const div = document.createElement('div');
+            div.innerHTML = msg;
+            div.className = `banner banner-${type}`;
+            warningBanner.appendChild(div);
+            
+            if (type !== 'error') {
+                setTimeout(() => {
+                    if (div.parentNode) div.parentNode.removeChild(div);
+                }, 5000);
+            }
+        }
+
+        // Unity build configuration
+        const buildUrl = "Build";
+        const config = {
+            dataUrl: buildUrl + "/b353945c8121a45ec798d15d75c9634a.data.unityweb",
+            frameworkUrl: buildUrl + "/212f41d5320933838ec69716a0ae40e8.framework.js.unityweb",
+            codeUrl: buildUrl + "/26ec01f9d538ba8656570f022957f264.wasm.unityweb",
+            streamingAssetsUrl: "StreamingAssets",
+            companyName: "Locofo Studio",
+            productName: "locoBakedGame",
+            productVersion: "1.0.2",
+            showBanner: showBanner,
+        };
+
+        // Responsive canvas sizing
+        function resizeCanvas() {
+            const rect = container.getBoundingClientRect();
+            canvas.style.width = rect.width + "px";
+            canvas.style.height = rect.height + "px";
+        }
+
+        // Mobile optimization
+        if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
+            container.className = "unity-mobile";
+            config.devicePixelRatio = 1;
+        }
+
+        // Initialize Unity
+        const script = document.createElement("script");
+        script.src = buildUrl + "/1bb6b99c537ce367ca8c7b74bd0e74c1.loader.js";
+        script.onload = () => {
+            createUnityInstance(canvas, config, (progress) => {
+                // Update loading progress (optional visual feedback)
+                console.log(`Loading: ${Math.round(progress * 100)}%`);
+            }).then((unityInstance) => {
+                // Hide loading, show game
+                loadingBar.style.display = "none";
+                canvas.style.display = "block";
+                
+                // Store instance globally
+                window.unityInstance = unityInstance;
+                
+                // Resize canvas
+                resizeCanvas();
+                window.addEventListener('resize', resizeCanvas);
+                
+                // Send Firebase auth if already ready
+                if (firebase && firebase.auth && firebase.auth().currentUser) {
+                    const user = firebase.auth().currentUser;
+                    const actualUid = window.unityGameParams.uid || user.uid;
+                    const gameParams = { ...window.unityGameParams, uid: actualUid };
+                    unityInstance.SendMessage('FirebaseBridge', 'OnAuthStateChanged', actualUid);
+                    unityInstance.SendMessage('FirebaseBridge', 'SetGameParameters', JSON.stringify(gameParams));
+                }
+                
+                console.log("[Unity] Game loaded successfully");
+                
+            }).catch((message) => {
+                showBanner(message, 'error');
+            });
+        };
+        
+        document.body.appendChild(script);
+    </script>
+</body>
+</html> 
